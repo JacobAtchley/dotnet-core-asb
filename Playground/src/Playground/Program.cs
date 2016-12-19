@@ -1,8 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Playground.Exe.Interfaces;
 
 namespace Playground.Exe
 {
@@ -15,30 +15,34 @@ namespace Playground.Exe
                 .AddUserSecrets()
                 ;
 
-
             var configuration = builder.Build();
 
-            MyExample(configuration);
+            var serviceCollection = new ServiceCollection()
+                .AddOptions()
+                .Configure<ServiceBusSettings>(configuration.GetSection("ServiceBus"))
+                .AddTransient(x => x.GetService<IOptions<ServiceBusSettings>>().Value)
+                .AddTransient<IPublisher, ServiceBusClient>()
+                .AddTransient<ISubscriberLocator, SubscriberLocator>()
+                .AddTransient<IServiceBusListener, ServiceBusClient>()
+                .AddTransient<ISubscriber<ServiceBusMessage>, Subscriber>();
+
+
+
+            MyExample(serviceCollection.BuildServiceProvider());
         }
 
-        private static void MyExample(IConfiguration configuration)
+        private static void MyExample(IServiceProvider provider)
         {
-            var settings = new ServiceBusSettings
-            {
-                Namespace = configuration["ServiceBus:NamespaceUrl"],
-                PolicyName = WebUtility.UrlEncode(configuration["ServiceBus:PolicyName"]),
-                Key = WebUtility.UrlEncode(configuration["ServiceBus:Key"])
-            };
 
-            //todo: this is where DI would come in and supply the subscribers.
-            var client = new ServiceBusClient(settings, new ISubscriber[] {new Subscriber()});
+            var publisher = provider.GetService<IPublisher>();
+            var client = provider.GetService<IServiceBusListener>();
 
-            client.StartListenerAsync("core-test", "core-test-subscription");
+            client.StartAsync("core-test", "core-test-subscription");
 
             Console.WriteLine("Press quit to exit. Any other key sends another service bus message...");
             do
             {
-                client.SendAsync(new ServiceBusMessage
+                publisher.PublishAsync(new ServiceBusMessage
                                  {
                                      Message = $"Hello it is {DateTimeOffset.UtcNow}",
                                      Id = Guid.NewGuid().ToString()

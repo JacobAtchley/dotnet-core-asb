@@ -1,22 +1,15 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using Playground.Exe.Interfaces;
 
 namespace Playground.Exe
 {
-    public class Subscriber : ISubscriber
+    public class Subscriber : ISubscriber<ServiceBusMessage>
     {
-        public Type MessageType => typeof(ServiceBusMessage);
-
-        public Task OnMessageRecieved<T>(T message)
+        public Task OnMessageReceivedAsync(ServiceBusMessage model)
         {
-            var sbm = message as ServiceBusMessage;
-
-            if (sbm != null)
-            {
-                Console.WriteLine($"Hello From Consumer: {sbm.Message}. Message Id {sbm.Id}");
-            }
+            if (model != null)
+                Console.WriteLine($"Hello From Consumer: {model.Message}. Message Id {model.Id}");
 
             return Task.CompletedTask;
         }

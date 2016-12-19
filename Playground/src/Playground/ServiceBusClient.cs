@@ -7,20 +7,21 @@ using System.Threading.Tasks;
 using System.Xml;
 using Amqp;
 using Amqp.Framing;
+using Playground.Exe.Interfaces;
 
 namespace Playground.Exe
 {
-    public class ServiceBusClient
+    public class ServiceBusClient : IPublisher, IServiceBusListener
     {
-        private readonly ISubscriber[] _subscribers;
         private Address _address;
         private Connection _connection;
         private Session _session;
+        private readonly ISubscriberLocator _locator;
 
-        public ServiceBusClient(ServiceBusSettings settings, ISubscriber[] subscribers)
+        public ServiceBusClient(ServiceBusSettings settings, ISubscriberLocator locator)
         {
-            ConnectionString = $"amqps://{settings.PolicyName}:{settings.Key}@{settings.Namespace}/";
-            _subscribers = subscribers;
+            ConnectionString = $"amqps://{settings.PolicyName}:{settings.Key}@{settings.NamespaceUrl}/";
+            _locator = locator;
         }
 
         protected string ConnectionString { get; }
@@ -31,49 +32,20 @@ namespace Playground.Exe
 
         protected Session Session => _session ?? (_session = new Session(Connection));
 
-        public async Task SendAsync<T>(T model, string topic)
-        {
-            var sender = new SenderLink(Session, $"{GetType().FullName}.sender", topic);
-
-            var message = GetMessage(model);
-            await sender.SendAsync(message);
-            await sender.CloseAsync();
-        }
-
-        public Task StartListenerAsync(string topic, string subscription)
-        {
-            var consumer = new ReceiverLink(Session, $"{GetType().FullName}.reciever",
-                                            $"{topic}/Subscriptions/{subscription}");
-            consumer.Start(5, OnMessage);
-            return Task.CompletedTask;
-        }
-
         private void OnMessage(ReceiverLink receiver, Message message)
         {
             var messageTypeStr = message.ApplicationProperties["Message.Type.FullName"].ToString();
-
-            var subscribers = _subscribers
-                .Where(x => x.MessageType.ToString() == messageTypeStr)
-                .ToArray();
+            var messageType = Type.GetType(messageTypeStr);
+            var subscribers = _locator.FindSubscribers(Type.GetType(messageTypeStr)).ToArray();
 
             if (subscribers != null)
             {
-                var firstSubscriber = subscribers.FirstOrDefault();
-
-                if (firstSubscriber == null)
-                {
-                    return;
-                }
-
-                var firstSubscriberType = firstSubscriber.GetType();
-                var messageType = firstSubscriber.MessageType;
                 var messageBody = GetMessageBody(message, messageType);
-                var onMessageRecieved = firstSubscriberType.GetMethod("OnMessageRecieved")
-                                                           .MakeGenericMethod(messageType);
 
                 foreach (var subscriber in subscribers)
                 {
-                    onMessageRecieved.Invoke(subscriber, new[] {messageBody});
+                    var onMessageReceived = typeof(Subscriber).GetMethod(nameof(ISubscriber<string>.OnMessageReceivedAsync));
+                    onMessageReceived.Invoke(subscriber, new[] {messageBody});
                 }
 
                 receiver.Accept(message);
@@ -157,6 +129,24 @@ namespace Playground.Exe
                     return message;
                 }
             }
+        }
+
+        public async Task PublishAsync<T>(T model, string topic)
+        {
+
+            var sender = new SenderLink(Session, $"{GetType().FullName}.sender", topic);
+
+            var message = GetMessage(model);
+            await sender.SendAsync(message);
+            await sender.CloseAsync();
+        }
+
+        public Task StartAsync(string topic, string subscription)
+        {
+            var consumer = new ReceiverLink(Session, $"{GetType().FullName}.reciever",
+                                            $"{topic}/Subscriptions/{subscription}");
+            consumer.Start(5, OnMessage);
+            return Task.CompletedTask;
         }
     }
 }
