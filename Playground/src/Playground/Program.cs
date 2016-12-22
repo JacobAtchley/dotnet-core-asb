@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,8 @@ namespace Playground.Exe
                 .AddUserSecrets()
                 ;
 
+            var isPublisher = args[0] == "1";
+
             var configuration = builder.Build();
 
             var serviceCollection = new ServiceCollection()
@@ -28,27 +31,37 @@ namespace Playground.Exe
 
 
 
-            MyExample(serviceCollection.BuildServiceProvider());
+            MyExample(serviceCollection.BuildServiceProvider(), isPublisher);
         }
 
-        private static void MyExample(IServiceProvider provider)
+        private static void MyExample(IServiceProvider provider, bool isPublisher)
         {
 
             var publisher = provider.GetService<IPublisher>();
             var client = provider.GetService<IServiceBusListener>();
 
-            client.StartAsync("core-test", "core-test-subscription");
-
-            Console.WriteLine("Press quit to exit. Any other key sends another service bus message...");
-            do
+            if (!isPublisher)
             {
-                publisher.PublishAsync(new ServiceBusMessage
-                                 {
-                                     Message = $"Hello it is {DateTimeOffset.UtcNow}",
-                                     Id = Guid.NewGuid().ToString()
-                                 }, "core-test").Wait();
+                client.StartAsync("core-test", "core-test-subscription");
+                var token = new CancellationTokenSource();
+                token.Token.WaitHandle.WaitOne();
             }
-            while (Console.ReadLine() != "quit");
+            else
+            {
+                Console.WriteLine("Press quit to exit. Any other key sends another service bus message...");
+
+                do
+                {
+                    publisher.PublishAsync(new ServiceBusMessage
+                                           {
+                                               Message = $"Hello it is {DateTimeOffset.UtcNow}",
+                                               Id = Guid.NewGuid().ToString()
+                                           }, "core-test").Wait();
+
+                    Console.WriteLine("Message published...");
+                }
+                while (Console.ReadLine() != "quit");
+            }
         }
     }
 }
